@@ -1,0 +1,21 @@
+{
+  "name": "gbot-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unofficial Windows terminal client for Grok Bot",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "gbot": "./bin/gbot.mjs" },
+  "files": ["bin/", "src/", "licenses/", "THIRD_PARTY_NOTICES.md"],
+  "engines": { "node": ">=24" },
+  "repository": { "type": "git", "url": "https://github.com/Bowen-Xue-ac2/gbot_cli.git" },
+  "scripts": { "gbot": "node ./bin/gbot.mjs", "test": "node --test test/*.test.mjs" },
+  "dependencies": {
+    "@mathjax/src": "4.1.3",
+    "beautiful-mermaid": "1.1.3",
+    "grok-bot-cli": "0.12.5",
+    "grokbot-tui": "0.2.0",
+    "markdown-it": "15.0.3",
+    "string-width": "8.3.0"
+  }
+}
