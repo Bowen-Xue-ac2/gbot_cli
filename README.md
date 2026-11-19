@@ -1,4 +1,4 @@
-# gbot_cli
+# gbot_cli 😊 🤝
 
 An unofficial Windows terminal client for Grok Bot. Chat with bots and channels,
 send follow-ups while a reply is in progress, and act on cards in the conversation.
@@ -66,7 +66,7 @@ the desktop app. This project is independent of Grok Bot, Cursor, and xAI.
 ## Contributing
 
 Run `npm test` for offline transport and terminal tests. Use `git commit -s -S`
-to add a DCO sign-off and a GPG signature. See the [contribution guide](CONTRIBUTING.md),
+to add a [DCO 1.1](DCO) sign-off and a GPG signature. See the [contribution guide](CONTRIBUTING.md),
 [security policy](SECURITY.md), and [changelog](CHANGELOG.md).
 
 Released under the [MIT license](LICENSE). Upstream CLI and TUI projects are
