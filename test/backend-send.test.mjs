@@ -95,11 +95,18 @@ test('actual TUI host sends via backend while list/transcript stay on the gatewa
     import assert from 'node:assert/strict';
     import { registerHooks } from 'node:module';
     const urls = [];
+    const richText = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', content: [
+      { type: 'mention', attrs: { id: 'bot-b', label: 'Bea' } },
+    ] }] });
     globalThis.fetch = async (url, init) => {
       urls.push(String(url));
       if (String(url) === ${JSON.stringify(SEND_URL)}) {
         assert.equal(init.headers.authorization, 'Bearer fake-user-token');
         assert.equal(init.headers['x-anyrun-network-token'], undefined);
+        const bytes = Buffer.from(richText);
+        assert.ok(bytes.length < 128);
+        assert.ok(Buffer.from(init.body).includes(Buffer.concat([Buffer.from([0x2a, bytes.length]), bytes])),
+          'the actual sender emits the selected reference in protobuf field 5');
         return new Response(Buffer.from('2002', 'hex'));
       }
       assert.equal(new Headers(init.headers).get('authorization'), 'Bearer fake-gateway-token');
@@ -124,7 +131,7 @@ test('actual TUI host sends via backend while list/transcript stay on the gatewa
     const { HttpHostClient } = await import(${JSON.stringify(hostModule)});
     const client = new HttpHostClient({ gatewayUrl: 'https://box.cursor.sh/path', token: 'fake-gateway-token' });
     assert.equal((await client.listAgents()).length, 1);
-    const ack = await client.sendPrompt({ agentId: 'fake-bot', prompt: 'mock-only', wait: false });
+    const ack = await client.sendPrompt({ agentId: 'fake-bot', prompt: '@Bea', richText, wait: false });
     assert.equal(ack.accepted, true);
     await client.getTranscript('fake-bot', 10, { hydrate: false });
     assert.deepEqual(urls, [

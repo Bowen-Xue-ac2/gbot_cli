@@ -10,12 +10,22 @@ function replaceOnce(source, before, after) {
 const protocolUrl = new URL('./bot-cards.mjs', import.meta.url).href;
 const inlineUrl = new URL('./inline-cards.mjs', import.meta.url).href;
 const readerUrl = new URL('./markdown-reader.mjs', import.meta.url).href;
+const catalogUrl = new URL('./route-catalog.mjs', import.meta.url).href;
+const senderUrl = new URL('./backend-send.mjs', import.meta.url).href;
+const pickerUrl = new URL('./route-picker.mjs', import.meta.url).href;
+const draftUrl = new URL('./route-draft.mjs', import.meta.url).href;
 
 export function patchCardHost(source) {
   const method = '    async sendPrompt(input) {';
   return 'import { submitCardAction } from ' + JSON.stringify(protocolUrl) + ';\n' +
+    'import { skillRoutes } from ' + JSON.stringify(catalogUrl) + ';\n' +
+    'import { listConnectedApps } from ' + JSON.stringify(senderUrl) + ';\n' +
     replaceOnce(source, method, '    actOnCard(agentId, card, action) {\n' +
       '        return submitCardAction((method, body, signal) => this.#call(method, body, signal), agentId, card, action);\n' +
+      '    }\n    async listRouteSkills(agentId, signal) {\n' +
+      '        return skillRoutes(await this.#call("getAgentWorkflows", { id: agentId }, signal));\n' +
+      '    }\n    listRouteApps(agentId, signal) {\n' +
+      '        return listConnectedApps(agentId, signal);\n' +
       '    }\n' + method);
 }
 
@@ -65,7 +75,7 @@ export function patchCardLayout(source) {
 // Keep the upstream package intact. A send waits only for submission acknowledgement;
 // the existing background transcript poll owns all incoming messages, including 1:1.
 export function patchTuiChatSource(source) {
-  source = replaceOnce(source, 'wait: !isGroup,', 'wait: false,');
+  source = replaceOnce(source, 'wait: !isGroup,', 'wait: false,\n                ...(richText ? { richText } : {}),');
   const start = '            // Rooms: keep the optimistic turn until idle poll sees the host commit.';
   const end = '\n        }\n        catch (err) {';
   const begin = source.indexOf(start);
@@ -84,7 +94,24 @@ export function patchTuiChatSource(source) {
       '    const cards = useInlineCards({ agentId, client, turns });',
       '    const [showSource, setShowSource] = useState(false);',
     ].join('\n')],
-    ['const menuOpen = mentionMenuOpen(', 'const menuOpen = !cards.focused && mentionMenuOpen('],
+    ['const [draft, setDraft] = useState(EMPTY_DRAFT);', 'const [draft, setDraft] = useRouteDraft(EMPTY_DRAFT);'],
+    ['const prompt = text.trim();', 'const prompt = text.trim();\n        const richText = richTextForDraft(draftRef.current);'],
+    ['const mentionOptions = useMemo(() => (isGroup ? mentionNames(liveAgent, liveRoster) : []), [isGroup, liveAgent, liveRoster]);',
+      'const picker = useRoutePicker({ draft, agent: liveAgent, roster: liveRoster, client, enabled: !cards.focused && status.kind !== "sending" && status.kind !== "loading" });'],
+    ['const mentionQ = isGroup ? mentionQuery(draft.text, draft.caret) : null;', 'const mentionQ = picker.query;'],
+    ['const mentionMatches = mentionQ ? filterMentions(mentionOptions, mentionQ.prefix) : [];', 'const mentionMatches = picker.matches;'],
+    ['`${mentionQ.start}:${mentionQ.prefix}`', '`${mentionQ.start}:${mentionQ.trigger}:${mentionQ.prefix}`'],
+    ['mentionMenuOpen(mentionMatches.length, mentionDismissed)', 'Boolean(mentionQ) && !mentionDismissed'],
+    ['const mentionShown = menuOpen ? visibleMentions(mentionMatches, mentionIndex) : [];',
+      'const selectedRoute = mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)];\n' +
+      '    const mentionShown = menuOpen ? visibleMentions(mentionMatches, mentionIndex, Math.max(1, Math.min(MAX_VISIBLE_MENTIONS, (rows || 24) - 10))) : [];'],
+    ['Math.min(mentionMatches.length, MAX_VISIBLE_MENTIONS)', 'mentionShown.length'],
+    ['const pick = mentionMatches.length === 1 ? mentionMatches[0] : mentionMatches[mentionIndex] ?? mentionMatches[0];',
+      'const pick = selectedRoute;'],
+    ['completeMention(value.text, pick, value.caret)', 'completeRoute(value, pick)'],
+    ['const selected = name === mentionMatches[mentionIndex];', 'const selected = name === selectedRoute;'],
+    ['children: [selected ? "› @" : "  @", name] }, name)',
+      'children: [selected ? "› " : "  ", mentionQ.trigger, name.label, "  [", name.detail, "]"] }, name.kind + ":" + name.id)'],
     ['const composeLaid = layoutCompose(draft.text, draft.caret, inner);',
       'const activeDraft = cards.editor ?? draft;\n    const composeLaid = layoutCompose(activeDraft.text, activeDraft.caret, inner);'],
     ['turnsToRows(turns, inner, labelCtx), [turns, inner, labelCtx]',
@@ -97,11 +124,13 @@ export function patchTuiChatSource(source) {
       'const canType = Boolean(cards.editor) || (!cards.focused && status.kind !== "sending" && status.kind !== "loading");'],
     ['const composePlaceholder = draft.text.length === 0 ? (busy ? "waiting…" : "message") : null;',
       'const composePlaceholder = activeDraft.text.length === 0 ? (cards.editor ? "card input" : busy ? "waiting…" : "message") : null;'],
-    ['children: FOOTER_HINT', 'children: cards.hint ?? ((showSource ? "Ctrl+R reader" : "Ctrl+R source") + " · " + FOOTER_HINT)'],
+    ['children: FOOTER_HINT', 'children: cards.hint ?? (menuOpen ? [picker.note, mentionMatches.length ? "↑↓ select · Tab/Enter insert" : "", "Esc close"].filter(Boolean).join(" · ") : "@ agent/app · / skill · " + (showSource ? "Ctrl+R reader" : "Ctrl+R source") + " · " + FOOTER_HINT)'],
     ['const color = isUser', 'const color = row.cardId ? "yellow" : isUser'],
     ['color: color, wrap: "truncate", children: row.text }',
       'color: color, wrap: "truncate", children: row.spans && row.text ? row.spans.map((span, index) => _jsx(Text, { ...span.style, children: span.text }, index)) : row.text || " " }'],
   ];
   for (const [before, after] of replacements) source = replaceOnce(source, before, after);
-  return 'import { useInlineCards } from ' + JSON.stringify(inlineUrl) + ';\n' + source;
+  return 'import { useInlineCards } from ' + JSON.stringify(inlineUrl) + ';\n' +
+    'import { useRouteDraft, useRoutePicker } from ' + JSON.stringify(pickerUrl) + ';\n' +
+    'import { completeRoute, richTextForDraft } from ' + JSON.stringify(draftUrl) + ';\n' + source;
 }

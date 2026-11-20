@@ -1,10 +1,13 @@
 // Protocol reference: smarzban/grokbot-tui#12 and #14 (SendGrokBotUserMessage).
 import { randomUUID } from 'node:crypto';
 import { LauncherError, loadWindowsSendCredentials } from './windows-session.mjs';
+import { appCandidates } from './route-catalog.mjs';
 
 export const SEND_URL = 'https://api2.cursor.sh/aiserver.v1.GrokBotService/SendGrokBotUserMessage';
+const APP_LIST_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetAvailableMcpServers';
+const APP_STATUS_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/ListSandMcpTools';
 // launch.mjs imports this adapter before installing its gateway-origin fetch guard.
-// User access tokens go only to SEND_URL; gateway tokens retain their origin guard.
+// The user-authenticated calls below have fixed destinations and refuse redirects.
 const backendFetch = globalThis.fetch;
 const machineId = randomUUID();
 const hostMarker = 'const sent = await this.#call("sendPrompt", {';
@@ -14,7 +17,49 @@ export function patchTuiHostSource(source, senderUrl = import.meta.url) {
     throw new LauncherError('send-adapter', 'The installed TUI sender changed. Refusing to use the obsolete gateway send endpoint.');
   }
   return `import { sendBackendPrompt } from ${JSON.stringify(senderUrl)};\n` +
-    source.replace(hostMarker, 'const sent = await sendBackendPrompt({');
+    source.replace(hostMarker, 'const sent = await sendBackendPrompt({\n                richText: input.richText,');
+}
+
+export async function listConnectedApps(agentId, signal, options = {}) {
+  signal?.throwIfAborted();
+  const auth = (options.loadCredentials ?? loadWindowsSendCredentials)();
+  const deadline = AbortSignal.timeout(15000);
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  async function read(url, body) {
+    const response = await (options.fetchImpl ?? backendFetch)(url, {
+      method: 'POST', redirect: 'error', signal: requestSignal,
+      headers: {
+        'content-type': 'application/json', 'connect-protocol-version': '1',
+        authorization: 'Bearer ' + auth.accessToken, 'x-cursor-client-type': 'sand',
+        'x-cursor-client-version': auth.clientVersion, 'x-sand-box-namespace': 'prod',
+        ...(auth.teamId === undefined ? {} : { 'x-cursor-team-id': auth.teamId }),
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new LauncherError('app-catalog', 'Could not read connected Grok Bot apps.');
+    return response.json();
+  }
+  const [account, scoped] = await Promise.all([read(APP_LIST_URL, {}), read(APP_LIST_URL, { grokBotAgentId: agentId })]);
+  const candidates = appCandidates(account, scoped);
+  const unknown = candidates.filter(app => !app.connected && app.identifier).map(app => app.identifier);
+  const active = new Set();
+  let partial = false;
+  if (unknown.length) {
+    try {
+      const report = await read(APP_STATUS_URL, { serverIdentifiers: [...new Set(unknown)] });
+      for (const server of report.servers ?? []) {
+        if (server.status === 'connected') {
+          if (server.serverIdentifier) active.add(server.serverIdentifier);
+          if (server.rowServerIdentifier) active.add(server.rowServerIdentifier);
+        }
+      }
+    } catch {
+      signal?.throwIfAborted();
+      partial = true;
+    }
+  }
+  const items = candidates.filter(app => app.connected || active.has(app.identifier)).map(app => app.item);
+  return { items, partial };
 }
 
 function varint(number) {
@@ -43,7 +88,8 @@ export function encodeSendRequest(input, sentAtMs = Date.now(), clientMachineId 
   // session_id (15) must remain unset: an invented session ID selects no agent.
   return Buffer.concat([
     stringField(1, input.agentId), stringField(2, input.clientNonce), stringField(3, input.prompt),
-    numberField(4, sentAtMs), numberField(13, 1), stringField(16, clientMachineId),
+    numberField(4, sentAtMs), ...(input.richText ? [stringField(5, input.richText)] : []),
+    numberField(13, 1), stringField(16, clientMachineId),
     stringField(20, 'en'), numberField(21, 1),
   ]);
 }

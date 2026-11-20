@@ -36,6 +36,7 @@ Subcommands such as `bots list` and `approvals list` run through the pinned upst
 ## Features
 
 - **Keep chatting.** Send another prompt while a reply is in progress. Incoming replies appear as the transcript updates.
+- **Route a request.** Type `@` to choose a bot or connected Grok Bot app, or `/` to choose a skill. Type part of its name to filter. You can select several items in one message. The bot receives their IDs when you send.
 - **Recover reads after gateway sleep.** Refresh the session and retry once when HTTP 417 identifies a sleeping gateway.
 - **Act on bot messages.** Answer choices, respond to supported approvals, and review or edit email drafts in the original card.
 - **Read formatted replies.** View Markdown headings, lists, and tables, Mermaid diagrams, and LaTeX fractions and matrices in the terminal. Press **Ctrl+R** to see the source.
@@ -51,7 +52,11 @@ A = ⎛  1   20 ⎞
 
 | Key | Action |
 | --- | --- |
-| **Tab** | Focus a card in the conversation |
+| **@** / **/** | Open the agent and app picker / skill picker |
+| **↑ / ↓**, **Tab** or **Enter** | Choose a picker result and insert it into the draft |
+| **Esc** | Dismiss the picker and keep the text you typed |
+| **Enter** | Send the draft when the picker is closed |
+| **Tab** | Focus a card when the picker is closed |
 | **↑ / ↓**, **Enter** | Choose and confirm the focused card action |
 | **y** | Confirm an email send when prompted |
 | **Ctrl+R** | Toggle between formatted reply and Markdown source |
