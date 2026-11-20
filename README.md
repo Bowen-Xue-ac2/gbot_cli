@@ -71,7 +71,7 @@ the desktop app. This project is independent of Grok Bot, Cursor, and xAI.
 ## Contributing
 
 Run `npm test` for offline transport and terminal tests. Use `git commit -s -S`
-to add a [DCO 1.1](DCO) sign-off and a GPG signature. See the [contribution guide](CONTRIBUTING.md),
+to add a [DCO 1.1](DCO) sign-off . See the [contribution guide](CONTRIBUTING.md),
 [security policy](SECURITY.md), and [changelog](CHANGELOG.md).
 
 Released under the [MIT license](LICENSE). Upstream CLI and TUI projects are
