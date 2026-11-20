@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { registerHooks } from 'node:module';
+import childProcess from 'node:child_process';
+import { registerHooks, syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stripVTControlCharacters } from 'node:util';
+import stringWidth from 'string-width';
 import { upstreamUrl, upstreamDependency } from '../src/upstream.mjs';
 const { default: React } = await import(upstreamDependency('react'));
 const { render } = await import(upstreamDependency('ink'));
@@ -132,6 +134,91 @@ test('unclosed blocks, prices, code and structured cards stay literal', () => {
 test('a powered fraction retains its grouping in a single terminal line', () => {
   const code = String.raw`$\frac{1}{2}^2$`;
   assert.equal(body(rowsFor(code)), '(1/2)²');
+});
+
+test('reader keeps HTTP link targets through wrapping, with literal code and unsafe schemes inactive', () => {
+  const source = [
+    'Read [**the wrapped documentation**](https://example.com/docs) and https://example.com/page.',
+    '<http://example.com/auto>',
+    '[Local](/path) [Mail](mailto:test@example.com) [FTP](ftp://example.com/file)',
+    'Code: ' + '\x60https://example.com/code\x60',
+  ].join('\n');
+  const hrefs = rows => rows.flatMap(row => row.spans).map(span => span.href).filter(Boolean);
+  const links = hrefs(rowsFor(source, 24));
+  assert.ok(links.filter(href => href === 'https://example.com/docs').length > 1);
+  assert.deepEqual([...new Set(links)], ['https://example.com/docs', 'https://example.com/page', 'http://example.com/auto']);
+  assert.deepEqual(hrefs(rowsFor(source, 100, { source: true })), []);
+});
+
+test('clicking the rendered link opens its URL once while adjacent text, dragging and source view do not', async t => {
+  const url = 'https://example.com/docs?topic=a%20b&part=2#ref';
+  const opens = [];
+  t.mock.method(childProcess, 'execFile', (_program, args, options, callback) => {
+    assert.equal(args.at(-1), 'Start-Process -FilePath $env:GBOT_BROWSER_URL -ErrorAction Stop');
+    opens.push(options.env.GBOT_BROWSER_URL);
+    callback(null);
+  });
+  syncBuiltinESMExports();
+  const stdin = Object.assign(new PassThrough(), { isTTY: true, setRawMode() {}, ref() {}, unref() {} });
+  const stdout = Object.assign(new PassThrough(), { isTTY: true, columns: 110, rows: 35 });
+  const stderr = new PassThrough();
+  stderr.resume();
+  let frame = '';
+  stdout.on('data', chunk => {
+    const output = stripVTControlCharacters(chunk.toString());
+    if (output.includes('Ctrl+R')) frame = output;
+  });
+  const agent = { id: 'example', name: 'Bot' };
+  const roster = [agent];
+  const client = {
+    getTranscript: async () => [turn('查看 [**Documentation**](' + url + ') then continue.')],
+    listAgents: async () => roster,
+  };
+  const app = render(React.createElement(Chat, { client, agent, roster, onSwitch() {} }),
+    { stdin, stdout, stderr, debug: true, exitOnCtrlC: false, patchConsole: false });
+  async function until(predicate, description) {
+    const deadline = Date.now() + 3000;
+    while (!predicate()) {
+      assert.ok(Date.now() < deadline, description);
+      await delay(10);
+    }
+  }
+  function point(label) {
+    const lines = frame.split('\n');
+    const y = lines.findIndex(line => line.includes(label));
+    assert.ok(y >= 0);
+    return { x: stringWidth(lines[y].slice(0, lines[y].indexOf(label))) + 1, y: y + 1 };
+  }
+  const mouse = ({ x, y }, type) => stdin.write('\x1b[<0;' + x + ';' + y + type);
+  try {
+    await until(() => frame.includes('Documentation'), 'initial reader frame');
+    const link = point('Documentation');
+    const adjacent = point('then continue');
+    mouse(adjacent, 'M');
+    mouse(adjacent, 'm');
+    mouse(link, 'M');
+    mouse(adjacent, 'm');
+    mouse(link, 'M');
+    mouse(link, 'm');
+    await until(() => opens.length > 0, 'click opens the link');
+    assert.deepEqual(opens, [url]);
+    stdin.write('\x12');
+    await until(() => frame.includes('**Documentation**'), 'source frame');
+    const source = point(url);
+    mouse(source, 'M');
+    mouse(source, 'm');
+    stdin.write('\x12');
+    await until(() => !frame.includes('**Documentation**'), 'reader frame restored');
+    assert.deepEqual(opens, [url]);
+  } finally {
+    app.unmount();
+    app.cleanup();
+    stdin.destroy();
+    stdout.destroy();
+    stderr.destroy();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
 });
 
 test('real Ink chat keeps LaTeX in the text frame during redraws and toggles the Markdown source', async () => {

@@ -7,7 +7,7 @@ send follow-ups while a reply is in progress, and act on cards in the conversati
 [![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-43853D)](#quick-start)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[Quick start](#quick-start) · [Features](#features) · [Keyboard controls](#keyboard-controls) · [Contributing](#contributing)
+[Quick start](#quick-start) · [Reading replies](#reading-replies) · [Architecture](#architecture) · [Keyboard controls](#keyboard-controls) · [Contributing](#contributing)
 
 ## Quick start
 
@@ -41,12 +41,66 @@ Subcommands such as `bots list` and `approvals list` run through the pinned upst
 - **Act on bot messages.** Answer choices, respond to supported approvals, and review or edit email drafts in the original card.
 - **Read formatted replies.** View Markdown headings, lists, and tables, Mermaid diagrams, and LaTeX fractions and matrices in the terminal. Press **Ctrl+R** to see the source.
 
-For example, `$$A=\begin{pmatrix}1&20\\300&4\end{pmatrix}$$` renders as terminal text.
+## Reading replies
+
+Bot replies open in reader view. Press **Ctrl+R** to inspect the original Markdown,
+TeX delimiters, or Mermaid definition. Press it again to return to the reader.
+
+Left-click an underlined web link in reader view to open it in your default
+Windows browser. This works with Markdown links and plain HTTP or HTTPS URLs.
+
+### Markdown and diagrams
+
+A reply containing `### Results`, `**net revenue**`, and `- [x] Checked`
+displays a heading, bold text, and a checked list item. Nested lists keep their
+indentation, and a vertical bar marks quoted passages. Tables use aligned
+columns when space permits. In a narrow pane, each record can expand vertically
+with its column names beside the values.
+
+A fenced `mermaid` block such as the following draws two connected boxes at
+that point in the reply. If the diagram exceeds the pane width or the renderer
+cannot draw it, you can still read its definition. Ordinary code blocks and
+inline code preserve literal examples such as `$x^2$`.
+
+```mermaid
+flowchart LR
+  A[Start] --> B[Done]
+```
+
+### Formulas and matrices
+
+Inline math stays in the sentence. For example, `$x^2 + \alpha$` reads as
+`x² + α`, and `\(\Delta Q\)` reads as `ΔQ`. Display math between `$$`
+delimiters can span several terminal rows. The expression
+`$$MC=\frac{\Delta TC}{\Delta Q}$$` appears as:
+
+```text
+     ΔTC
+MC = ───
+      ΔQ
+```
+
+Matrix columns align even when entries have different widths. For example,
+`$$A=\begin{pmatrix}1&20\\300&4\end{pmatrix}$$` appears as:
 
 ```text
 A = ⎛  1   20 ⎞
     ⎝ 300   4 ⎠
 ```
+
+Wide fractions can switch to grouped slash notation. Inline matrices and
+matrices too wide for the pane use commas between columns and semicolons between
+rows, as in `[1, 0; 0, 1]`. Unsupported TeX and unfinished display blocks stay
+visible as source.
+
+## Architecture
+
+| Layer | How it works |
+| --- | --- |
+| Command entry | The [Node.js entry point](bin/gbot.mjs) starts the interactive client for chat, mock mode, and connection checks. It delegates other subcommands to the pinned `grok-bot-cli`. |
+| Terminal UI | The [launcher](src/launch.mjs) uses Node.js module load hooks to adapt the pinned React/Ink client from `grokbot-tui`. The adapters add card actions, routing pickers, and reader rows to the chat. |
+| Live messages | The [Windows session adapter](src/windows-session.mjs) uses the active desktop account. The [send adapter](src/backend-send.mjs) submits the prompt. A [background transcript poll](src/tui-chat.mjs) brings replies into the same conversation, leaving the draft available for a follow-up. |
+| Reply layout | The [Markdown reader](src/markdown-reader.mjs) turns `markdown-it` tokens into styled terminal rows. The [formula renderer](src/terminal-math.mjs) uses MathJax to parse TeX and lays out the result in Unicode cells. The [diagram renderer](src/rich-replies.mjs) uses `beautiful-mermaid` for text diagrams. Ink redraws formulas and surrounding prose in the same frame. |
 
 ## Keyboard controls
 

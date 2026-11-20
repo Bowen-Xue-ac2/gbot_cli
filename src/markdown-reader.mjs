@@ -3,9 +3,11 @@ import { stripVTControlCharacters } from 'node:util';
 import stringWidth from 'string-width';
 import { renderMermaidLines } from './rich-replies.mjs';
 import { terminalMath } from './terminal-math.mjs';
+import { browserUrl } from './browser-links.mjs';
 
 const MAX_MARKDOWN = 64 * 1024;
-const md = new MarkdownIt({ html: false, breaks: true });
+const md = new MarkdownIt({ html: false, breaks: true, linkify: true });
+md.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 const subtle = { dimColor: true };
 const codeStyle = { color: 'cyan' };
@@ -75,11 +77,11 @@ function safeText(text) {
   return stripVTControlCharacters(text.replace(/\r\n?/g, '\n')).replace(unsafeControls, '�');
 }
 
-function addSpan(row, text, style) {
+function addSpan(row, text, style, href) {
   if (!text) return;
   const last = row.at(-1);
-  if (last?.style === style && last) last.text += text;
-  else row.push({ text, style });
+  if (last && last.style === style && last.href === href) last.text += text;
+  else row.push(href ? { text, style, href } : { text, style });
 }
 
 const flatten = spans => spans.map(span => span.text).join('');
@@ -120,7 +122,7 @@ function wrapSpans(spans, width) {
     row = [];
     cells = 0;
   };
-  for (const { text, style } of spans) {
+  for (const { text, style, href } of spans) {
     for (const word of text.match(/\n|[ \t]+|[^\n\t ]+/g) ?? []) {
       if (word === '\n') {
         nextLine();
@@ -132,14 +134,14 @@ function wrapSpans(spans, width) {
       if (blank && (cells === 0 || cells + size > width)) continue;
       if (cells && size <= width && cells + size > width) nextLine();
       if (size <= width) {
-        addSpan(row, chunk, style);
+        addSpan(row, chunk, style, href);
         cells += size;
         continue;
       }
       for (const { segment } of segmenter.segment(chunk)) {
         const segmentWidth = stringWidth(segment);
         if (cells && cells + segmentWidth > width) nextLine();
-        addSpan(row, segment, style);
+        addSpan(row, segment, style, href);
         cells += segmentWidth;
       }
     }
@@ -152,19 +154,25 @@ function inlineSpans(tokens, base) {
   const levels = [base];
   const out = [];
   const inlineStyles = {
-    strong_open: { bold: true }, em_open: { italic: true }, s_open: { strikethrough: true }, link_open: linkStyle,
+    strong_open: { bold: true }, em_open: { italic: true }, s_open: { strikethrough: true },
   };
+  let href;
   for (const token of tokens) {
     const style = levels.at(-1);
-    if (Object.hasOwn(inlineStyles, token.type)) levels.push({ ...style, ...inlineStyles[token.type] });
-    else if (token.nesting === -1 && levels.length > 1) levels.pop();
-    else if (token.type === 'code_inline') addSpan(out, token.content, { ...style, ...codeStyle });
+    if (token.type === 'link_open') {
+      href = browserUrl(token.attrGet('href'));
+      levels.push(href ? { ...style, ...linkStyle } : style);
+    } else if (token.nesting === -1 && levels.length > 1) {
+      levels.pop();
+      if (token.type === 'link_close') href = undefined;
+    } else if (Object.hasOwn(inlineStyles, token.type)) levels.push({ ...style, ...inlineStyles[token.type] });
+    else if (token.type === 'code_inline') addSpan(out, token.content, { ...style, ...codeStyle }, href);
     else if (token.type === 'gbot_latex_inline') {
-      addSpan(out, terminalMath(token.meta?.tex)?.[0] ?? token.content, { ...style, ...mathStyle });
+      addSpan(out, terminalMath(token.meta?.tex)?.[0] ?? token.content, { ...style, ...mathStyle }, href);
     }
-    else if (token.type === 'softbreak' || token.type === 'hardbreak') addSpan(out, '\n', style);
-    else if (token.type === 'image') addSpan(out, token.content ? '[image: ' + token.content + ']' : '[image]', subtle);
-    else if (token.content) addSpan(out, token.content, style);
+    else if (token.type === 'softbreak' || token.type === 'hardbreak') addSpan(out, '\n', style, href);
+    else if (token.type === 'image') addSpan(out, token.content ? '[image: ' + token.content + ']' : '[image]', subtle, href);
+    else if (token.content) addSpan(out, token.content, style, href);
   }
   return out;
 }

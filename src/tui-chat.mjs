@@ -10,6 +10,7 @@ function replaceOnce(source, before, after) {
 const protocolUrl = new URL('./bot-cards.mjs', import.meta.url).href;
 const inlineUrl = new URL('./inline-cards.mjs', import.meta.url).href;
 const readerUrl = new URL('./markdown-reader.mjs', import.meta.url).href;
+const browserUrl = new URL('./browser-links.mjs', import.meta.url).href;
 const catalogUrl = new URL('./route-catalog.mjs', import.meta.url).href;
 const senderUrl = new URL('./backend-send.mjs', import.meta.url).href;
 const pickerUrl = new URL('./route-picker.mjs', import.meta.url).href;
@@ -89,10 +90,16 @@ export function patchTuiChatSource(source) {
     '            setStatus({ kind: "idle" });' + source.slice(finish);
   source = replaceOnce(source, 'return isGroup ? "sent" : "waiting";', 'return "sending";');
   const replacements = [
+    ['Box, Text, useApp, useInput, useStdout, useWindowSize', 'Box, Text, measureElement, useApp, useInput, useStdout, useWindowSize'],
+    ['function renderTranscriptRows(rows, inner)', 'function renderTranscriptRows(rows, inner, linkRows)'],
     ['const agentId = agent.id;', [
       'const agentId = agent.id;',
       '    const cards = useInlineCards({ agentId, client, turns });',
       '    const [showSource, setShowSource] = useState(false);',
+      '    const [browserError, setBrowserError] = useState(false);',
+      '    const linkRows = useRef(new Map());',
+      '    const linkPress = useRef(null);',
+      '    const transcript = useRef(null);',
     ].join('\n')],
     ['const [draft, setDraft] = useState(EMPTY_DRAFT);', 'const [draft, setDraft] = useRouteDraft(EMPTY_DRAFT);'],
     ['const prompt = text.trim();', 'const prompt = text.trim();\n        const richText = richTextForDraft(draftRef.current);'],
@@ -118,19 +125,51 @@ export function patchTuiChatSource(source) {
       'turnsToRows(cards.rendered, inner, labelCtx, { source: showSource }), [cards.rendered, inner, labelCtx, showSource]'],
     ['const current = statusRef.current;',
       'const current = statusRef.current;\n        if (!cards.focused && isCtrlKey(input, key, "r")) { setShowSource(value => !value); return; }'],
+    ['                if (event.release)\n                    continue;', [
+      '                if (event.button === 0) {',
+      '                    const { x, y } = event;',
+      '                    const href = linkAtPoint(linkRows.current, transcript.current, x - 1, y - 1, measureElement);',
+      '                    if (!event.release) {',
+      '                        linkPress.current = href ? { href, x, y } : null;',
+      '                    } else {',
+      '                        const press = linkPress.current;',
+      '                        linkPress.current = null;',
+      '                        if (press && href === press.href && x === press.x && y === press.y) {',
+      '                            setBrowserError(false);',
+      '                            openBrowserLink(href).catch(() => setBrowserError(true));',
+      '                        }',
+      '                    }',
+      '                }',
+      '                if (event.release)',
+      '                    continue;',
+    ].join('\n')],
     ['        if (menuOpen) {',
       '        if ((cards.focused || !menuOpen) && cards.handleInput(input, key, view.rows, inner)) return;\n        if (menuOpen) {'],
     ['const canType = status.kind !== "sending" && status.kind !== "loading";',
       'const canType = Boolean(cards.editor) || (!cards.focused && status.kind !== "sending" && status.kind !== "loading");'],
     ['const composePlaceholder = draft.text.length === 0 ? (busy ? "waiting…" : "message") : null;',
       'const composePlaceholder = activeDraft.text.length === 0 ? (cards.editor ? "card input" : busy ? "waiting…" : "message") : null;'],
-    ['children: FOOTER_HINT', 'children: cards.hint ?? (menuOpen ? [picker.note, mentionMatches.length ? "↑↓ select · Tab/Enter insert" : "", "Esc close"].filter(Boolean).join(" · ") : "@ agent/app · / skill · " + (showSource ? "Ctrl+R reader" : "Ctrl+R source") + " · " + FOOTER_HINT)'],
+    ['children: FOOTER_HINT', 'children: browserError ? "Could not open the default browser." : cards.hint ?? (menuOpen ? [picker.note, mentionMatches.length ? "↑↓ select · Tab/Enter insert" : "", "Esc close"].filter(Boolean).join(" · ") : "@ agent/app · / skill · " + (showSource ? "Ctrl+R reader" : "Ctrl+R source") + " · " + FOOTER_HINT)'],
+    ['justifyContent: TRANSCRIPT_JUSTIFY', 'ref: transcript, justifyContent: TRANSCRIPT_JUSTIFY'],
+    ['renderTranscriptRows(view.rows, inner)', 'renderTranscriptRows(view.rows, inner, linkRows.current)'],
     ['const color = isUser', 'const color = row.cardId ? "yellow" : isUser'],
-    ['color: color, wrap: "truncate", children: row.text }',
-      'color: color, wrap: "truncate", children: row.spans && row.text ? row.spans.map((span, index) => _jsx(Text, { ...span.style, children: span.text }, index)) : row.text || " " }'],
+    ['out.push(_jsx(Text, { bold: row.kind === "speaker", dimColor: row.kind === "image", color: color, wrap: "truncate", children: row.text }, `${row.kind}-${i}-${row.text.trimStart().slice(0, 16)}`));', [
+      'const key = row.kind + "-" + i + "-" + row.text.trimStart().slice(0, 16);',
+      '        const text = _jsx(Text, { bold: row.kind === "speaker", dimColor: row.kind === "image", color, wrap: "truncate",',
+      '            children: row.spans && row.text ? row.spans.map((span, index) => _jsx(Text, { ...span.style, children: span.text }, index)) : row.text || " " }, key);',
+      '        if (row.spans?.some(span => span.href)) {',
+      '            out.push(_jsx(Box, { ref: node => {',
+      '                if (node) linkRows.set(i, { node, spans: row.spans });',
+      '                else linkRows.delete(i);',
+      '            }, children: text }, key));',
+      '        } else {',
+      '            out.push(text);',
+      '        }',
+    ].join('\n')],
   ];
   for (const [before, after] of replacements) source = replaceOnce(source, before, after);
   return 'import { useInlineCards } from ' + JSON.stringify(inlineUrl) + ';\n' +
+    'import { linkAtPoint, openBrowserLink } from ' + JSON.stringify(browserUrl) + ';\n' +
     'import { useRouteDraft, useRoutePicker } from ' + JSON.stringify(pickerUrl) + ';\n' +
     'import { completeRoute, richTextForDraft } from ' + JSON.stringify(draftUrl) + ';\n' + source;
 }
